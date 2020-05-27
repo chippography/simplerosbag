@@ -48,12 +48,12 @@ import struct
 import sys
 import threading
 import time
-import yaml
+import yaml # pip3 install pyyaml
 
-from Cryptodome.Cipher import AES
-from Cryptodome.Random import get_random_bytes
+# from Cryptodome.Cipher import AES
+# from Cryptodome.Random import get_random_bytes
 
-import gnupg
+# import gnupg
 
 try:
     from cStringIO import StringIO  # Python 2.x
@@ -172,230 +172,230 @@ class _ROSBagNoEncryptor(_ROSBagEncryptor):
     def get_info_str(self):
         return ''
 
-class _ROSBagAesCbcEncryptor(_ROSBagEncryptor):
-    """
-    Class for AES-CBC-encrypted bags.
-    """
-    NAME = 'rosbag/AesCbcEncryptor'
-    _GPG_USER_FIELD_NAME = 'gpg_user'
-    _ENCRYPTED_KEY_FIELD_NAME = 'encrypted_key'
-
-    def __init__(self):
-        """
-        Create AES encryptor.
-        """
-        super(_ROSBagAesCbcEncryptor, self).__init__()
-        # User name of GPG key used for symmetric key encryption
-        self._gpg_key_user = None
-        # GPG passphrase
-        self._gpg_passphrase = None
-        # Symmetric key for encryption/decryption
-        self._symmetric_key = None
-        # Encrypted symmetric key
-        self._encrypted_symmetric_key = None
-
-    def initialize(self, bag, gpg_key_user, passphrase=None):
-        """
-        Initialize encryptor by composing AES symmetric key.
-        @param bag: bag to be encrypted/decrypted
-        @type  bag: Bag
-        @param gpg_key_user: user name of GPG key used for symmetric key encryption
-        @type  gpg_key_user: str
-        @raise ROSBagException: if GPG key user has already been set
-        """
-        if bag._mode != 'w':
-            self._gpg_passphrase = passphrase or os.getenv('ROSBAG_GPG_PASSPHRASE', None)
-            return
-        if self._gpg_key_user == gpg_key_user:
-            return
-        if not self._gpg_key_user:
-            self._gpg_key_user = gpg_key_user
-            self._build_symmetric_key()
-        else:
-            raise ROSBagException('Encryption user has already been set to {}'.format(self._gpg_key_user))
-
-    def encrypt_chunk(self, chunk_size, chunk_data_pos, f):
-        """
-        Read chunk from file, encrypt it, and write back to file.
-        @param chunk_size: size of chunk
-        @type  chunk_size: int
-        @param chunk_data_pos: position of chunk data portion
-        @type  chunk_data_pos: int
-        @param f: file stream
-        @type  f: file
-        @return: size of initialization vector and encrypted chunk
-        @rtype:  int
-        """
-        f.seek(chunk_data_pos)
-        chunk = _read(f, chunk_size)
-        # Encrypt chunk
-        iv = get_random_bytes(AES.block_size)
-        f.seek(chunk_data_pos)
-        f.write(iv)
-        cipher = AES.new(self._symmetric_key, AES.MODE_CBC, iv)
-        encrypted_chunk = cipher.encrypt(_add_padding(chunk))
-        # Write encrypted chunk
-        f.write(encrypted_chunk)
-        f.truncate(f.tell())
-        return AES.block_size + len(encrypted_chunk)
-
-    def decrypt_chunk(self, encrypted_chunk):
-        """
-        Decrypt chunk.
-        @param encrypted_chunk: chunk to decrypt
-        @type  encrypted_chunk: str
-        @return: decrypted chunk
-        @rtype:  str
-        @raise ROSBagFormatException: if size of input chunk is not multiple of AES block size
-        """
-        if len(encrypted_chunk) % AES.block_size != 0:
-            raise ROSBagFormatException('Error in encrypted chunk size: {}'.format(len(encrypted_chunk)))
-        if len(encrypted_chunk) < AES.block_size:
-            raise ROSBagFormatException('No initialization vector in encrypted chunk: {}'.format(len(encrypted_chunk)))
-
-        iv = encrypted_chunk[:AES.block_size]
-        cipher = AES.new(self._symmetric_key, AES.MODE_CBC, iv)
-        decrypted_chunk = cipher.decrypt(encrypted_chunk[AES.block_size:])
-        return _remove_padding(decrypted_chunk)
-
-    def add_fields_to_file_header(self, header):
-        """
-        Add encryptor information to bag file header.
-        @param header: bag file header
-        @type  header: dict
-        """
-        header[self._ENCRYPTOR_FIELD_NAME] = self.NAME
-        header[self._GPG_USER_FIELD_NAME] = self._gpg_key_user
-        header[self._ENCRYPTED_KEY_FIELD_NAME] = self._encrypted_symmetric_key
-
-    def read_fields_from_file_header(self, header):
-        """
-        Read encryptor information from bag file header.
-        @param header: bag file header
-        @type  header: dict
-        @raise ROSBagFormatException: if GPG key user is not found in header
-        """
-        try:
-            self._encrypted_symmetric_key = _read_bytes_field(header, self._ENCRYPTED_KEY_FIELD_NAME)
-        except ROSBagFormatException:
-            raise ROSBagFormatException('Encrypted symmetric key is not found in header')
-        try:
-            self._gpg_key_user = _read_str_field(header, self._GPG_USER_FIELD_NAME)
-        except ROSBagFormatException:
-            raise ROSBagFormatException('GPG key user is not found in header')
-        try:
-            self._symmetric_key = _decrypt_string_gpg(self._encrypted_symmetric_key, self._gpg_passphrase)
-        except ROSBagFormatException:
-            raise
-
-    def write_encrypted_header(self, _, f, header):
-        """
-        Write encrypted header to bag file.
-        @param f: file stream
-        @type  f: file
-        @param header: unencrypted header
-        @type  header: dict
-        @return: encrypted string representing header
-        @rtype:  str
-        """
-        header_str = b''
-        equal = b'='
-        for k, v in header.items():
-            if not isinstance(k, bytes):
-                k = k.encode()
-            if not isinstance(v, bytes):
-                v = v.encode()
-            header_str += _pack_uint32(len(k) + 1 + len(v)) + k + equal + v
-
-        iv = get_random_bytes(AES.block_size)
-        enc_str = iv
-        cipher = AES.new(self._symmetric_key, AES.MODE_CBC, iv)
-        enc_str += cipher.encrypt(_add_padding(header_str))
-        _write_sized(f, enc_str)
-        return enc_str
-
-    def read_encrypted_header(self, _, f, req_op=None):
-        """
-        Read encrypted header from bag file.
-        @param f: file stream
-        @type  f: file
-        @param req_op: expected header op code
-        @type  req_op: int
-        @return: decrypted header
-        @rtype:  dict
-        @raise ROSBagFormatException: if error occurs while decrypting/reading header
-        """
-        # Read header
-        try:
-            header = self._decrypt_encrypted_header(f)
-        except ROSBagException as ex:
-            raise ROSBagFormatException('Error reading header: %s' % str(ex))
-
-        return _build_header_from_str(header, req_op)
-
-    def add_info_rows(self, rows):
-        """
-        Add rows for rosbag info.
-        @param rows: information on bag encryption
-        @type  rows: list of tuples
-        """
-        rows.append(('encryption', self.NAME))
-        rows.append(('GPG key user', self._gpg_key_user))
-
-    def get_info_str(self):
-        """
-        Return string for rosbag info.
-        @return: information on bag encryption
-        @rtype:  str
-        """
-        return 'encryption: %s\nGPG key user: %s\n' % (self.NAME, self._gpg_key_user)
-
-    def _build_symmetric_key(self):
-        if not self._gpg_key_user:
-            return
-        self._symmetric_key = get_random_bytes(AES.block_size)
-        self._encrypted_symmetric_key = _encrypt_string_gpg(self._gpg_key_user, self._symmetric_key)
-
-    def _decrypt_encrypted_header(self, f):
-        try:
-            size = _read_uint32(f)
-        except struct.error as ex:
-            raise ROSBagFormatException('error unpacking uint32: %s' % str(ex))
-
-        if size % AES.block_size != 0:
-            raise ROSBagFormatException('Error in encrypted header size: {}'.format(size))
-        if size < AES.block_size:
-            raise ROSBagFormatException('No initialization vector in encrypted header: {}'.format(size))
-
-        iv = _read(f, AES.block_size)
-        size -= AES.block_size
-        encrypted_header = _read(f, size)
-        cipher = AES.new(self._symmetric_key, AES.MODE_CBC, iv)
-        header = cipher.decrypt(encrypted_header)
-        return _remove_padding(header)
-
-def _add_padding(input_bytes):
-    # Add PKCS#7 padding to input string
-    padding_num = AES.block_size - len(input_bytes) % AES.block_size
-    return input_bytes + bytes((padding_num,) * padding_num)
-
-def _remove_padding(input_str):
-    # Remove PKCS#7 padding from input string
-    return input_str[:-ord(input_str[len(input_str) - 1:])]
-
-def _encrypt_string_gpg(key_user, input):
-    gpg = gnupg.GPG()
-    enc_data = gpg.encrypt(input, [key_user], always_trust=True)
-    if not enc_data.ok:
-        raise ROSBagEncryptException('Failed to encrypt bag: {}.  Have you installed a required public key?'.format(enc_data.status))
-    return str(enc_data)
-
-def _decrypt_string_gpg(input, passphrase=None):
-    gpg = gnupg.GPG()
-    dec_data = gpg.decrypt(input, passphrase=passphrase)
-    if not dec_data.ok:
-        raise ROSBagEncryptException('Failed to decrypt bag: {}.  Have you installed a required private key?'.format(dec_data.status))
-    return dec_data.data
+# class _ROSBagAesCbcEncryptor(_ROSBagEncryptor):
+#     """
+#     Class for AES-CBC-encrypted bags.
+#     """
+#     NAME = 'rosbag/AesCbcEncryptor'
+#     _GPG_USER_FIELD_NAME = 'gpg_user'
+#     _ENCRYPTED_KEY_FIELD_NAME = 'encrypted_key'
+#
+#     def __init__(self):
+#         """
+#         Create AES encryptor.
+#         """
+#         super(_ROSBagAesCbcEncryptor, self).__init__()
+#         # User name of GPG key used for symmetric key encryption
+#         self._gpg_key_user = None
+#         # GPG passphrase
+#         self._gpg_passphrase = None
+#         # Symmetric key for encryption/decryption
+#         self._symmetric_key = None
+#         # Encrypted symmetric key
+#         self._encrypted_symmetric_key = None
+#
+#     def initialize(self, bag, gpg_key_user, passphrase=None):
+#         """
+#         Initialize encryptor by composing AES symmetric key.
+#         @param bag: bag to be encrypted/decrypted
+#         @type  bag: Bag
+#         @param gpg_key_user: user name of GPG key used for symmetric key encryption
+#         @type  gpg_key_user: str
+#         @raise ROSBagException: if GPG key user has already been set
+#         """
+#         if bag._mode != 'w':
+#             self._gpg_passphrase = passphrase or os.getenv('ROSBAG_GPG_PASSPHRASE', None)
+#             return
+#         if self._gpg_key_user == gpg_key_user:
+#             return
+#         if not self._gpg_key_user:
+#             self._gpg_key_user = gpg_key_user
+#             self._build_symmetric_key()
+#         else:
+#             raise ROSBagException('Encryption user has already been set to {}'.format(self._gpg_key_user))
+#
+#     def encrypt_chunk(self, chunk_size, chunk_data_pos, f):
+#         """
+#         Read chunk from file, encrypt it, and write back to file.
+#         @param chunk_size: size of chunk
+#         @type  chunk_size: int
+#         @param chunk_data_pos: position of chunk data portion
+#         @type  chunk_data_pos: int
+#         @param f: file stream
+#         @type  f: file
+#         @return: size of initialization vector and encrypted chunk
+#         @rtype:  int
+#         """
+#         f.seek(chunk_data_pos)
+#         chunk = _read(f, chunk_size)
+#         # Encrypt chunk
+#         iv = get_random_bytes(AES.block_size)
+#         f.seek(chunk_data_pos)
+#         f.write(iv)
+#         cipher = AES.new(self._symmetric_key, AES.MODE_CBC, iv)
+#         encrypted_chunk = cipher.encrypt(_add_padding(chunk))
+#         # Write encrypted chunk
+#         f.write(encrypted_chunk)
+#         f.truncate(f.tell())
+#         return AES.block_size + len(encrypted_chunk)
+#
+#     def decrypt_chunk(self, encrypted_chunk):
+#         """
+#         Decrypt chunk.
+#         @param encrypted_chunk: chunk to decrypt
+#         @type  encrypted_chunk: str
+#         @return: decrypted chunk
+#         @rtype:  str
+#         @raise ROSBagFormatException: if size of input chunk is not multiple of AES block size
+#         """
+#         if len(encrypted_chunk) % AES.block_size != 0:
+#             raise ROSBagFormatException('Error in encrypted chunk size: {}'.format(len(encrypted_chunk)))
+#         if len(encrypted_chunk) < AES.block_size:
+#             raise ROSBagFormatException('No initialization vector in encrypted chunk: {}'.format(len(encrypted_chunk)))
+#
+#         iv = encrypted_chunk[:AES.block_size]
+#         cipher = AES.new(self._symmetric_key, AES.MODE_CBC, iv)
+#         decrypted_chunk = cipher.decrypt(encrypted_chunk[AES.block_size:])
+#         return _remove_padding(decrypted_chunk)
+#
+#     def add_fields_to_file_header(self, header):
+#         """
+#         Add encryptor information to bag file header.
+#         @param header: bag file header
+#         @type  header: dict
+#         """
+#         header[self._ENCRYPTOR_FIELD_NAME] = self.NAME
+#         header[self._GPG_USER_FIELD_NAME] = self._gpg_key_user
+#         header[self._ENCRYPTED_KEY_FIELD_NAME] = self._encrypted_symmetric_key
+#
+#     def read_fields_from_file_header(self, header):
+#         """
+#         Read encryptor information from bag file header.
+#         @param header: bag file header
+#         @type  header: dict
+#         @raise ROSBagFormatException: if GPG key user is not found in header
+#         """
+#         try:
+#             self._encrypted_symmetric_key = _read_bytes_field(header, self._ENCRYPTED_KEY_FIELD_NAME)
+#         except ROSBagFormatException:
+#             raise ROSBagFormatException('Encrypted symmetric key is not found in header')
+#         try:
+#             self._gpg_key_user = _read_str_field(header, self._GPG_USER_FIELD_NAME)
+#         except ROSBagFormatException:
+#             raise ROSBagFormatException('GPG key user is not found in header')
+#         try:
+#             self._symmetric_key = _decrypt_string_gpg(self._encrypted_symmetric_key, self._gpg_passphrase)
+#         except ROSBagFormatException:
+#             raise
+#
+#     def write_encrypted_header(self, _, f, header):
+#         """
+#         Write encrypted header to bag file.
+#         @param f: file stream
+#         @type  f: file
+#         @param header: unencrypted header
+#         @type  header: dict
+#         @return: encrypted string representing header
+#         @rtype:  str
+#         """
+#         header_str = b''
+#         equal = b'='
+#         for k, v in header.items():
+#             if not isinstance(k, bytes):
+#                 k = k.encode()
+#             if not isinstance(v, bytes):
+#                 v = v.encode()
+#             header_str += _pack_uint32(len(k) + 1 + len(v)) + k + equal + v
+#
+#         iv = get_random_bytes(AES.block_size)
+#         enc_str = iv
+#         cipher = AES.new(self._symmetric_key, AES.MODE_CBC, iv)
+#         enc_str += cipher.encrypt(_add_padding(header_str))
+#         _write_sized(f, enc_str)
+#         return enc_str
+#
+#     def read_encrypted_header(self, _, f, req_op=None):
+#         """
+#         Read encrypted header from bag file.
+#         @param f: file stream
+#         @type  f: file
+#         @param req_op: expected header op code
+#         @type  req_op: int
+#         @return: decrypted header
+#         @rtype:  dict
+#         @raise ROSBagFormatException: if error occurs while decrypting/reading header
+#         """
+#         # Read header
+#         try:
+#             header = self._decrypt_encrypted_header(f)
+#         except ROSBagException as ex:
+#             raise ROSBagFormatException('Error reading header: %s' % str(ex))
+#
+#         return _build_header_from_str(header, req_op)
+#
+#     def add_info_rows(self, rows):
+#         """
+#         Add rows for rosbag info.
+#         @param rows: information on bag encryption
+#         @type  rows: list of tuples
+#         """
+#         rows.append(('encryption', self.NAME))
+#         rows.append(('GPG key user', self._gpg_key_user))
+#
+#     def get_info_str(self):
+#         """
+#         Return string for rosbag info.
+#         @return: information on bag encryption
+#         @rtype:  str
+#         """
+#         return 'encryption: %s\nGPG key user: %s\n' % (self.NAME, self._gpg_key_user)
+#
+#     def _build_symmetric_key(self):
+#         if not self._gpg_key_user:
+#             return
+#         self._symmetric_key = get_random_bytes(AES.block_size)
+#         self._encrypted_symmetric_key = _encrypt_string_gpg(self._gpg_key_user, self._symmetric_key)
+#
+#     def _decrypt_encrypted_header(self, f):
+#         try:
+#             size = _read_uint32(f)
+#         except struct.error as ex:
+#             raise ROSBagFormatException('error unpacking uint32: %s' % str(ex))
+#
+#         if size % AES.block_size != 0:
+#             raise ROSBagFormatException('Error in encrypted header size: {}'.format(size))
+#         if size < AES.block_size:
+#             raise ROSBagFormatException('No initialization vector in encrypted header: {}'.format(size))
+#
+#         iv = _read(f, AES.block_size)
+#         size -= AES.block_size
+#         encrypted_header = _read(f, size)
+#         cipher = AES.new(self._symmetric_key, AES.MODE_CBC, iv)
+#         header = cipher.decrypt(encrypted_header)
+#         return _remove_padding(header)
+#
+# def _add_padding(input_bytes):
+#     # Add PKCS#7 padding to input string
+#     padding_num = AES.block_size - len(input_bytes) % AES.block_size
+#     return input_bytes + bytes((padding_num,) * padding_num)
+#
+# def _remove_padding(input_str):
+#     # Remove PKCS#7 padding from input string
+#     return input_str[:-ord(input_str[len(input_str) - 1:])]
+#
+# def _encrypt_string_gpg(key_user, input):
+#     gpg = gnupg.GPG()
+#     enc_data = gpg.encrypt(input, [key_user], always_trust=True)
+#     if not enc_data.ok:
+#         raise ROSBagEncryptException('Failed to encrypt bag: {}.  Have you installed a required public key?'.format(enc_data.status))
+#     return str(enc_data)
+#
+# def _decrypt_string_gpg(input, passphrase=None):
+#     gpg = gnupg.GPG()
+#     dec_data = gpg.decrypt(input, passphrase=passphrase)
+#     if not dec_data.ok:
+#         raise ROSBagEncryptException('Failed to decrypt bag: {}.  Have you installed a required private key?'.format(dec_data.status))
+#     return dec_data.data
 
 class Bag(object):
     """
