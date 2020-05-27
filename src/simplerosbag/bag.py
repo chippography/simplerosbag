@@ -60,6 +60,9 @@ try:
 except ImportError:
     from io import BytesIO as StringIO  # Python 3.x
 
+# Use the local versions of these libraries - patching sys.path!
+sys.path.append(os.path.join(os.path.dirname(__file__), '..'))
+
 import genmsg
 import genpy
 import genpy.dynamic

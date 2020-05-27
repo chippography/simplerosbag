@@ -1,9 +1,13 @@
 import unittest
 import tempfile
 import os
+import sys
 
-import rosbag
-import rospy
+# Use the local versions of these libraries - patching sys.path!
+sys.path.append(os.path.join(os.path.dirname(__file__), '..', 'src'))
+
+import simplerosbag as rosbag
+# import rospy
 
 BAG_DIR = tempfile.mkdtemp(prefix='rosbag_tests')
 
@@ -73,3 +77,6 @@ class TestRoundTrip(unittest.TestCase):
 
         self.assertIsInstance(numbers[1], Int32)
         self.assertIsInstance(chatter[1], String)
+
+if __name__ == '__main__':
+    unittest.main()
