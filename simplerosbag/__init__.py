@@ -30,4 +30,8 @@
 # ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE
 # POSSIBILITY OF SUCH DAMAGE.
 
+# supporting (embedded) packages
+
+
+# rosbag
 from .bag import Bag, Compression, ROSBagException, ROSBagFormatException, ROSBagUnindexedException

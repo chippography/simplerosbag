@@ -4,7 +4,7 @@ import os
 import sys
 
 # Use the local versions of these libraries - patching sys.path!
-sys.path.append(os.path.join(os.path.dirname(__file__), '..', 'src'))
+sys.path.append(os.path.join(os.path.dirname(__file__), '..'))
 
 import simplerosbag as rosbag
 # import rospy

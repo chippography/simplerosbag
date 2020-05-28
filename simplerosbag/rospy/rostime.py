@@ -45,7 +45,6 @@ import time
 import traceback
 
 # import rospy.exceptions
-
 import genpy
 
 ## /time support. This hooks into the rospy Time representation and

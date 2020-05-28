@@ -61,15 +61,17 @@ except ImportError:
     from io import BytesIO as StringIO  # Python 3.x
 
 # Use the local versions of these libraries - patching sys.path!
-sys.path.append(os.path.join(os.path.dirname(__file__), '..'))
+# sys.path.append(os.path.join(os.path.dirname(__file__), '..'))
 
 import genmsg
 import genpy
-import genpy.dynamic
-import genpy.message
+from genpy.dynamic import generate_dynamic
+from genpy.message import get_message_class
 
-import roslib.names # still needed for roslib.names.canonicalize_name()
-import rospy
+# embedded
+from .roslib.names import canonicalize_name
+from . import rospy
+
 try:
     import roslz4
     found_lz4 = True
@@ -631,7 +633,7 @@ class Bag(object):
             if raw:
                 if pytype is None:
                     try:
-                        pytype = genpy.message.get_message_class(msg_type)
+                        pytype = get_message_class(msg_type)
                     except Exception:
                         pytype = None
                 if pytype is None:
@@ -1321,12 +1323,12 @@ class Bag(object):
         """
         if topics:
             if type(topics) is str:
-                topics = set([roslib.names.canonicalize_name(topics)])
+                topics = set([canonicalize_name(topics)])
             else:
-                topics = set([roslib.names.canonicalize_name(t) for t in topics])
+                topics = set([canonicalize_name(t) for t in topics])
 
         for c in self._connections.values():
-            if topics and c.topic not in topics and roslib.names.canonicalize_name(c.topic) not in topics:
+            if topics and c.topic not in topics and canonicalize_name(c.topic) not in topics:
                 continue
             if connection_filter and not connection_filter(c.topic, c.datatype, c.md5sum, c.msg_def, c.header):
                 continue
@@ -1913,11 +1915,11 @@ def _get_message_type(info):
     message_type = _message_types.get(info.md5sum)
     if message_type is None:
         try:
-            message_type = genpy.dynamic.generate_dynamic(info.datatype, info.msg_def)[info.datatype]
+            message_type = generate_dynamic(info.datatype, info.msg_def)[info.datatype]
             if (message_type._md5sum != info.md5sum):
                 print('WARNING: For type [%s] stored md5sum [%s] does not match message definition [%s].\n  Try: "rosrun rosbag fix_msg_defs.py old_bag new_bag."'%(info.datatype, info.md5sum, message_type._md5sum), file=sys.stderr)
         except genmsg.InvalidMsgSpec:
-            message_type = genpy.dynamic.generate_dynamic(info.datatype, "")[info.datatype]
+            message_type = generate_dynamic(info.datatype, "")[info.datatype]
             print('WARNING: For type [%s] stored md5sum [%s] has invalid message definition."'%(info.datatype, info.md5sum), file=sys.stderr)
         except genmsg.MsgGenerationException as ex:
             raise ROSBagException('Error generating datatype %s: %s' % (info.datatype, str(ex)))
