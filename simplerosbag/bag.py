@@ -69,7 +69,7 @@ from genpy.dynamic import generate_dynamic
 from genpy.message import get_message_class
 
 # embedded
-from .roslib.names import canonicalize_name
+from . names import canonicalize_name
 from . import rospy
 
 try:
